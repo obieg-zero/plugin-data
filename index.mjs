@@ -15,7 +15,7 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
         var _a;
         if ((_a = f.inputType) == null ? void 0 : _a.startsWith("select:")) {
           const refType = f.inputType.split(":")[1];
-          const options = store.usePosts(refType).map((r) => ({ value: r.data.name || r.id, label: r.data.name || r.id }));
+          const options = store.usePosts(refType).map((r) => ({ value: r.id, label: r.data.name || r.id }));
           return /* @__PURE__ */ jsx(ui.Field, { label: f.label, required: f.required, children: options.length > 0 ? /* @__PURE__ */ jsx(ui.Select, { value: form[f.key], options: [{ value: "", label: "— wybierz —" }, ...options], onChange: (e) => set(f.key, e.target.value) }) : /* @__PURE__ */ jsx(ui.Input, { value: form[f.key], onChange: (e) => set(f.key, e.target.value), placeholder: "Wpisz ręcznie" }) }, f.key);
         }
         return /* @__PURE__ */ jsx(ui.Field, { label: f.label, required: f.required, children: /* @__PURE__ */ jsx(ui.Input, { value: form[f.key], type: f.inputType, onChange: (e) => set(f.key, e.target.value) }) }, f.key);
@@ -93,8 +93,8 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
         RecordForm,
         {
           schema: typeDef.schema,
-          onSubmit: async (data) => {
-            await store.add(tab, data);
+          onSubmit: (data) => {
+            store.add(tab, data);
             useData.setState({ mode: "list" });
             sdk.log("Dodano rekord", "ok");
           },
@@ -119,8 +119,8 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
         {
           schema: typeDef.schema,
           initial: record.data,
-          onSubmit: async (data) => {
-            await store.update(record.id, data);
+          onSubmit: (data) => {
+            store.update(record.id, data);
             useData.setState({ mode: "list" });
             sdk.log("Zapisano", "ok");
           },
@@ -150,7 +150,7 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
         ] }),
         bottom: /* @__PURE__ */ jsxs(ui.Row, { justify: "between", children: [
           /* @__PURE__ */ jsx(ui.Button, { size: "xs", color: "error", outline: true, onClick: async () => {
-            await store.remove(record.id);
+            store.remove(record.id);
             useData.setState({ selectedId: null });
             sdk.log("Usunięto rekord", "ok");
           }, children: "Usuń" }),
@@ -170,7 +170,7 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
         sdk.log("Brak danych w pliku", "error");
         return;
       }
-      const count = await store.importJSON(data.map((d) => ({ type, data: d })));
+      const count = store.importJSON(data.map((d) => ({ type, data: d })));
       sdk.log(`Zaimportowano ${count} rekordów`, "ok");
     } else {
       try {
@@ -179,7 +179,7 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
           sdk.log("Oczekiwana tablica JSON", "error");
           return;
         }
-        const count = await store.importJSON(nodes);
+        const count = store.importJSON(nodes);
         sdk.log(`Zaimportowano ${count} rekordów`, "ok");
       } catch (e) {
         sdk.log(`Błąd: ${e instanceof Error ? e.message : String(e)}`, "error");

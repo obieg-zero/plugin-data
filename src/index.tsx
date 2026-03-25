@@ -1,4 +1,4 @@
-import type { PluginFactory, PostRecord, SchemaField } from '../../plugin-types'
+import type { PluginFactory, PostRecord, SchemaField } from '@obieg-zero/sdk'
 
 const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
   const { useState } = React
@@ -18,7 +18,7 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
         {schema.map(f => {
           if (f.inputType?.startsWith('select:')) {
             const refType = f.inputType.split(':')[1]
-            const options = store.usePosts(refType).map((r: PostRecord) => ({ value: r.data.name || r.id, label: r.data.name || r.id }))
+            const options = store.usePosts(refType).map((r: PostRecord) => ({ value: r.id, label: r.data.name || r.id }))
             return <ui.Field key={f.key} label={f.label} required={f.required}>
               {options.length > 0
                 ? <ui.Select value={form[f.key]} options={[{ value: '', label: '— wybierz —' }, ...options]} onChange={(e: { target: { value: string } }) => set(f.key, e.target.value)} />
@@ -90,7 +90,7 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
         {tab && typeDef && <CrudList type={tab} schema={typeDef.schema} selectedId={selectedId}
           onSelect={id => useData.setState({ selectedId: id, mode: 'list' })} onAdd={() => useData.setState({ mode: 'add', selectedId: null })} />}
         {tab && typeDef && mode === 'add' && <RecordForm schema={typeDef.schema}
-          onSubmit={async data => { await store.add(tab, data); useData.setState({ mode: 'list' }); sdk.log('Dodano rekord', 'ok') }}
+          onSubmit={data => { store.add(tab, data); useData.setState({ mode: 'list' }); sdk.log('Dodano rekord', 'ok') }}
           onCancel={() => useData.setState({ mode: 'list' })} />}
       </ui.Stack></ui.Page>
     )
@@ -111,7 +111,7 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
       return (
         <ui.Box header={<ui.Cell label>Edycja</ui.Cell>} body={
           <RecordForm schema={typeDef.schema} initial={record.data as Record<string, unknown>}
-            onSubmit={async data => { await store.update(record.id, data); useData.setState({ mode: 'list' }); sdk.log('Zapisano', 'ok') }}
+            onSubmit={data => { store.update(record.id, data); useData.setState({ mode: 'list' }); sdk.log('Zapisano', 'ok') }}
             onCancel={() => useData.setState({ mode: 'list' })} />
         } />
       )
@@ -140,7 +140,7 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
           </>}
           bottom={<ui.Row justify="between">
             <ui.Button size="xs" color="error" outline onClick={async () => {
-              await store.remove(record.id)
+              store.remove(record.id)
               useData.setState({ selectedId: null })
               sdk.log('Usunięto rekord', 'ok')
             }}>Usuń</ui.Button>
@@ -159,13 +159,13 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
     if (parser) {
       const data = parser.parse(await file.text())
       if (!data.length) { sdk.log('Brak danych w pliku', 'error'); return }
-      const count = await store.importJSON(data.map(d => ({ type, data: d as Record<string, unknown> })))
+      const count = store.importJSON(data.map(d => ({ type, data: d as Record<string, unknown> })))
       sdk.log(`Zaimportowano ${count} rekordów`, 'ok')
     } else {
       try {
         const nodes = JSON.parse(await file.text())
         if (!Array.isArray(nodes)) { sdk.log('Oczekiwana tablica JSON', 'error'); return }
-        const count = await store.importJSON(nodes)
+        const count = store.importJSON(nodes)
         sdk.log(`Zaimportowano ${count} rekordów`, 'ok')
       } catch (e: unknown) { sdk.log(`Błąd: ${e instanceof Error ? e.message : String(e)}`, 'error') }
     }
