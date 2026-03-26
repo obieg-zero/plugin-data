@@ -1,8 +1,32 @@
 import type { PluginFactory, PostRecord, SchemaField } from '@obieg-zero/sdk'
 
 const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
-  const { useState } = React
-  const { Database } = icons
+  const { useState, useEffect, useMemo } = React
+  const { Database, Link, GitMerge, File: FileIcon, Paperclip } = icons
+
+  const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(v)
+
+  const resolveLabel = (id: string): string | null => {
+    const ref = store.get(id)
+    if (!ref) return null
+    const td = store.getType(ref.type)
+    if (td) {
+      const labelKey = td.schema.find(f => f.required)?.key || td.schema[0]?.key
+      if (labelKey && ref.data[labelKey]) return String(ref.data[labelKey])
+    }
+    return ref.id.slice(0, 8)
+  }
+
+  const formatValue = (f: SchemaField, val: unknown): { node: React.ReactNode; isRef: boolean } => {
+    if (val == null || val === '') return { node: '', isRef: false }
+    if (f.inputType?.startsWith('select:') || (typeof val === 'string' && isUuid(val))) {
+      const label = resolveLabel(String(val))
+      if (label) return { node: label, isRef: true }
+    }
+    if (Array.isArray(val)) return { node: `[${val.length}]`, isRef: false }
+    if (typeof val === 'object') return { node: JSON.stringify(val), isRef: false }
+    return { node: String(val), isRef: false }
+  }
 
   function RecordForm({ schema, initial, onSubmit, onCancel }: {
     schema: SchemaField[]; initial?: Record<string, unknown>; onSubmit: (data: Record<string, unknown>) => void; onCancel?: () => void
@@ -18,7 +42,10 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
         {schema.map(f => {
           if (f.inputType?.startsWith('select:')) {
             const refType = f.inputType.split(':')[1]
-            const options = store.usePosts(refType).map((r: PostRecord) => ({ value: r.id, label: r.data.name || r.id }))
+            const options = store.usePosts(refType).map((r: PostRecord) => {
+              const label = resolveLabel(r.id)
+              return { value: r.id, label: label || r.id }
+            })
             return <ui.Field key={f.key} label={f.label} required={f.required}>
               {options.length > 0
                 ? <ui.Select value={form[f.key]} options={[{ value: '', label: '— wybierz —' }, ...options]} onChange={(e: { target: { value: string } }) => set(f.key, e.target.value)} />
@@ -43,13 +70,38 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
     const records = store.usePosts(type) as PostRecord[]
     const canParse = sdk.getParsers(type).length > 0
 
+    const recordIds = useMemo(() => records.map(r => r.id).join(), [records])
+    const [filesMap, setFilesMap] = useState<Record<string, boolean>>({})
+    useEffect(() => {
+      const ids = records.map(r => r.id)
+      Promise.all(ids.map(id => store.listFiles(id).then(f => [id, f.length > 0] as const)))
+        .then(pairs => setFilesMap(Object.fromEntries(pairs)))
+    }, [recordIds])
+
+    const hasFiles = Object.values(filesMap).some(Boolean)
+    const hasParent = records.some(r => r.parentId)
     const tableSchema = schema.slice(0, 3)
-    const columns = tableSchema.map(f => ({ key: f.key, header: f.label }))
-    const rows = records.map(r => {
+    const columns = useMemo(() => [
+      ...(hasParent ? [{ key: '_parent', header: 'Rodzic' }] : []),
+      ...tableSchema.map(f => ({ key: f.key, header: f.label })),
+      ...(hasFiles ? [{ key: '_files', header: '' }] : []),
+    ], [hasParent, hasFiles, tableSchema])
+
+    const rows = useMemo(() => records.map(r => {
       const row: Record<string, React.ReactNode> = {}
-      for (const f of tableSchema) row[f.key] = String(r.data[f.key] ?? '')
+      if (hasParent) {
+        row._parent = r.parentId
+          ? <ui.Row gap="xs"><GitMerge size={12} /><span>{resolveLabel(r.parentId) || '—'}</span></ui.Row>
+          : ''
+      }
+      for (const f of tableSchema) {
+        const { node, isRef } = formatValue(f, r.data[f.key])
+        row[f.key] = isRef ? <ui.Row gap="xs"><Link size={12} /><span>{node}</span></ui.Row> : node
+      }
+      if (hasFiles) row._files = filesMap[r.id] ? <Paperclip size={12} /> : ''
       return { ...row, _id: r.id }
-    })
+    }), [records, hasParent, hasFiles, filesMap])
+
     const activeRow = records.findIndex(r => r.id === selectedId)
 
     return (
@@ -96,6 +148,23 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
     )
   }
 
+  function FileList({ postId }: { postId: string }) {
+    const [files, setFiles] = useState<string[]>([])
+    useEffect(() => { store.listFiles(postId).then(setFiles) }, [postId])
+    if (!files.length) return null
+    return <ui.Stack gap="sm">
+      <ui.Row gap="xs">
+        <Paperclip size={10} />
+        <ui.Text muted size="2xs">Pliki ({files.length})</ui.Text>
+      </ui.Row>
+      {files.map(name => <ui.Row key={name} gap="xs">
+        <FileIcon size={12} />
+        <ui.Text size="xs">{name}</ui.Text>
+      </ui.Row>)}
+      <ui.Divider />
+    </ui.Stack>
+  }
+
   function DetailPanel() {
     const { selectedId, mode, activeTab } = useData()
     const types = store.getTypes()
@@ -121,22 +190,39 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
     const title = nameKey ? String(record.data[nameKey] ?? '') : record.id.slice(0, 8)
     const detailFields = typeDef.schema.filter(f => f.key !== nameKey)
 
+    const parentInfo = record.parentId ? (() => {
+      const parent = store.get(record.parentId!)
+      if (!parent) return null
+      const pt = store.getType(parent.type)
+      const label = resolveLabel(parent.id)
+      return { typeLabel: pt?.label || parent.type, label: label || parent.id.slice(0, 8) }
+    })() : null
+
     return (
       <ui.Page>
         <ui.StageLayout
           top={<>
             <ui.Text muted size="2xs">{new Date(record.createdAt).toLocaleDateString()}</ui.Text>
             <ui.Heading title={title} subtitle={typeDef.label} />
+            {parentInfo && <ui.Row gap="xs">
+              <GitMerge size={10} />
+              <ui.Text muted size="2xs">{parentInfo.typeLabel}: {parentInfo.label}</ui.Text>
+            </ui.Row>}
             <ui.Divider />
             {detailFields.map(f => {
               const val = record.data[f.key]
               if (!val && val !== 0) return null
+              const { node, isRef } = formatValue(f, val)
               return <ui.Stack key={f.key} gap="sm">
-                <ui.Text muted size="2xs">{f.label}</ui.Text>
-                <ui.Text size="xs">{String(val)}</ui.Text>
+                <ui.Row gap="xs">
+                  {isRef && <Link size={10} />}
+                  <ui.Text muted size="2xs">{f.label}</ui.Text>
+                </ui.Row>
+                <ui.Text size="xs">{node}</ui.Text>
                 <ui.Divider />
               </ui.Stack>
             })}
+            <FileList postId={record.id} />
           </>}
           bottom={<ui.Row justify="between">
             <ui.Button size="xs" color="error" outline onClick={async () => {
@@ -171,11 +257,10 @@ const plugin: PluginFactory = ({ React, ui, store, sdk, icons }) => {
     }
   }
 
-  // Register contribution points
   sdk.registerView('data.center', { slot: 'center', component: CrudView })
   sdk.registerView('data.right', { slot: 'right', component: DetailPanel })
 
-  return { id: 'data', label: 'Dane', icon: Database, version: '0.2.0' }
+  return { id: 'data', label: 'Dane', icon: Database, version: '0.3.0' }
 }
 
 export default plugin

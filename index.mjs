@@ -1,7 +1,30 @@
 import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 const plugin = ({ React, ui, store, sdk, icons }) => {
-  const { useState } = React;
-  const { Database } = icons;
+  const { useState, useEffect, useMemo } = React;
+  const { Database, Link, GitMerge, File: FileIcon, Paperclip } = icons;
+  const isUuid = (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(v);
+  const resolveLabel = (id) => {
+    var _a, _b;
+    const ref = store.get(id);
+    if (!ref) return null;
+    const td = store.getType(ref.type);
+    if (td) {
+      const labelKey = ((_a = td.schema.find((f) => f.required)) == null ? void 0 : _a.key) || ((_b = td.schema[0]) == null ? void 0 : _b.key);
+      if (labelKey && ref.data[labelKey]) return String(ref.data[labelKey]);
+    }
+    return ref.id.slice(0, 8);
+  };
+  const formatValue = (f, val) => {
+    var _a;
+    if (val == null || val === "") return { node: "", isRef: false };
+    if (((_a = f.inputType) == null ? void 0 : _a.startsWith("select:")) || typeof val === "string" && isUuid(val)) {
+      const label = resolveLabel(String(val));
+      if (label) return { node: label, isRef: true };
+    }
+    if (Array.isArray(val)) return { node: `[${val.length}]`, isRef: false };
+    if (typeof val === "object") return { node: JSON.stringify(val), isRef: false };
+    return { node: String(val), isRef: false };
+  };
   function RecordForm({ schema, initial, onSubmit, onCancel }) {
     const defaults = {};
     schema.forEach((f) => {
@@ -15,7 +38,10 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
         var _a;
         if ((_a = f.inputType) == null ? void 0 : _a.startsWith("select:")) {
           const refType = f.inputType.split(":")[1];
-          const options = store.usePosts(refType).map((r) => ({ value: r.id, label: r.data.name || r.id }));
+          const options = store.usePosts(refType).map((r) => {
+            const label = resolveLabel(r.id);
+            return { value: r.id, label: label || r.id };
+          });
           return /* @__PURE__ */ jsx(ui.Field, { label: f.label, required: f.required, children: options.length > 0 ? /* @__PURE__ */ jsx(ui.Select, { value: form[f.key], options: [{ value: "", label: "— wybierz —" }, ...options], onChange: (e) => set(f.key, e.target.value) }) : /* @__PURE__ */ jsx(ui.Input, { value: form[f.key], onChange: (e) => set(f.key, e.target.value), placeholder: "Wpisz ręcznie" }) }, f.key);
         }
         return /* @__PURE__ */ jsx(ui.Field, { label: f.label, required: f.required, children: /* @__PURE__ */ jsx(ui.Input, { value: form[f.key], type: f.inputType, onChange: (e) => set(f.key, e.target.value) }) }, f.key);
@@ -29,13 +55,38 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
   function CrudList({ type, schema, selectedId, onSelect, onAdd }) {
     const records = store.usePosts(type);
     const canParse = sdk.getParsers(type).length > 0;
+    const recordIds = useMemo(() => records.map((r) => r.id).join(), [records]);
+    const [filesMap, setFilesMap] = useState({});
+    useEffect(() => {
+      const ids = records.map((r) => r.id);
+      Promise.all(ids.map((id) => store.listFiles(id).then((f) => [id, f.length > 0]))).then((pairs) => setFilesMap(Object.fromEntries(pairs)));
+    }, [recordIds]);
+    const hasFiles = Object.values(filesMap).some(Boolean);
+    const hasParent = records.some((r) => r.parentId);
     const tableSchema = schema.slice(0, 3);
-    const columns = tableSchema.map((f) => ({ key: f.key, header: f.label }));
-    const rows = records.map((r) => {
+    const columns = useMemo(() => [
+      ...hasParent ? [{ key: "_parent", header: "Rodzic" }] : [],
+      ...tableSchema.map((f) => ({ key: f.key, header: f.label })),
+      ...hasFiles ? [{ key: "_files", header: "" }] : []
+    ], [hasParent, hasFiles, tableSchema]);
+    const rows = useMemo(() => records.map((r) => {
       const row = {};
-      for (const f of tableSchema) row[f.key] = String(r.data[f.key] ?? "");
+      if (hasParent) {
+        row._parent = r.parentId ? /* @__PURE__ */ jsxs(ui.Row, { gap: "xs", children: [
+          /* @__PURE__ */ jsx(GitMerge, { size: 12 }),
+          /* @__PURE__ */ jsx("span", { children: resolveLabel(r.parentId) || "—" })
+        ] }) : "";
+      }
+      for (const f of tableSchema) {
+        const { node, isRef } = formatValue(f, r.data[f.key]);
+        row[f.key] = isRef ? /* @__PURE__ */ jsxs(ui.Row, { gap: "xs", children: [
+          /* @__PURE__ */ jsx(Link, { size: 12 }),
+          /* @__PURE__ */ jsx("span", { children: node })
+        ] }) : node;
+      }
+      if (hasFiles) row._files = filesMap[r.id] ? /* @__PURE__ */ jsx(Paperclip, { size: 12 }) : "";
       return { ...row, _id: r.id };
-    });
+    }), [records, hasParent, hasFiles, filesMap]);
     const activeRow = records.findIndex((r) => r.id === selectedId);
     return /* @__PURE__ */ jsxs(ui.Stack, { children: [
       /* @__PURE__ */ jsxs(ui.Row, { justify: "between", children: [
@@ -103,6 +154,28 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
       )
     ] }) });
   }
+  function FileList({ postId }) {
+    const [files, setFiles] = useState([]);
+    useEffect(() => {
+      store.listFiles(postId).then(setFiles);
+    }, [postId]);
+    if (!files.length) return null;
+    return /* @__PURE__ */ jsxs(ui.Stack, { gap: "sm", children: [
+      /* @__PURE__ */ jsxs(ui.Row, { gap: "xs", children: [
+        /* @__PURE__ */ jsx(Paperclip, { size: 10 }),
+        /* @__PURE__ */ jsxs(ui.Text, { muted: true, size: "2xs", children: [
+          "Pliki (",
+          files.length,
+          ")"
+        ] })
+      ] }),
+      files.map((name) => /* @__PURE__ */ jsxs(ui.Row, { gap: "xs", children: [
+        /* @__PURE__ */ jsx(FileIcon, { size: 12 }),
+        /* @__PURE__ */ jsx(ui.Text, { size: "xs", children: name })
+      ] }, name)),
+      /* @__PURE__ */ jsx(ui.Divider, {})
+    ] });
+  }
   function DetailPanel() {
     var _a, _b, _c;
     const { selectedId, mode, activeTab } = useData();
@@ -131,22 +204,42 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
     const nameKey = ((_b = typeDef.schema.find((f) => f.required)) == null ? void 0 : _b.key) || ((_c = typeDef.schema[0]) == null ? void 0 : _c.key);
     const title = nameKey ? String(record.data[nameKey] ?? "") : record.id.slice(0, 8);
     const detailFields = typeDef.schema.filter((f) => f.key !== nameKey);
+    const parentInfo = record.parentId ? (() => {
+      const parent = store.get(record.parentId);
+      if (!parent) return null;
+      const pt = store.getType(parent.type);
+      const label = resolveLabel(parent.id);
+      return { typeLabel: (pt == null ? void 0 : pt.label) || parent.type, label: label || parent.id.slice(0, 8) };
+    })() : null;
     return /* @__PURE__ */ jsx(ui.Page, { children: /* @__PURE__ */ jsx(
       ui.StageLayout,
       {
         top: /* @__PURE__ */ jsxs(Fragment, { children: [
           /* @__PURE__ */ jsx(ui.Text, { muted: true, size: "2xs", children: new Date(record.createdAt).toLocaleDateString() }),
           /* @__PURE__ */ jsx(ui.Heading, { title, subtitle: typeDef.label }),
+          parentInfo && /* @__PURE__ */ jsxs(ui.Row, { gap: "xs", children: [
+            /* @__PURE__ */ jsx(GitMerge, { size: 10 }),
+            /* @__PURE__ */ jsxs(ui.Text, { muted: true, size: "2xs", children: [
+              parentInfo.typeLabel,
+              ": ",
+              parentInfo.label
+            ] })
+          ] }),
           /* @__PURE__ */ jsx(ui.Divider, {}),
           detailFields.map((f) => {
             const val = record.data[f.key];
             if (!val && val !== 0) return null;
+            const { node, isRef } = formatValue(f, val);
             return /* @__PURE__ */ jsxs(ui.Stack, { gap: "sm", children: [
-              /* @__PURE__ */ jsx(ui.Text, { muted: true, size: "2xs", children: f.label }),
-              /* @__PURE__ */ jsx(ui.Text, { size: "xs", children: String(val) }),
+              /* @__PURE__ */ jsxs(ui.Row, { gap: "xs", children: [
+                isRef && /* @__PURE__ */ jsx(Link, { size: 10 }),
+                /* @__PURE__ */ jsx(ui.Text, { muted: true, size: "2xs", children: f.label })
+              ] }),
+              /* @__PURE__ */ jsx(ui.Text, { size: "xs", children: node }),
               /* @__PURE__ */ jsx(ui.Divider, {})
             ] }, f.key);
-          })
+          }),
+          /* @__PURE__ */ jsx(FileList, { postId: record.id })
         ] }),
         bottom: /* @__PURE__ */ jsxs(ui.Row, { justify: "between", children: [
           /* @__PURE__ */ jsx(ui.Button, { size: "xs", color: "error", outline: true, onClick: async () => {
@@ -188,7 +281,7 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
   }
   sdk.registerView("data.center", { slot: "center", component: CrudView });
   sdk.registerView("data.right", { slot: "right", component: DetailPanel });
-  return { id: "data", label: "Dane", icon: Database, version: "0.2.0" };
+  return { id: "data", label: "Dane", icon: Database, version: "0.3.0" };
 };
 export {
   plugin as default
