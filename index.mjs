@@ -128,9 +128,11 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
     const tab = activeTab || ((_a = tabs[0]) == null ? void 0 : _a.type) || null;
     const typeDef = tab ? store.getType(tab) : null;
     const selectTab = (type) => useData.setState({ activeTab: type, selectedId: null, mode: "list" });
+    const allTabs = [...tabs.map((t) => ({ id: t.type, label: t.label })), { id: "_options", label: "Opcje" }];
     return /* @__PURE__ */ jsx(ui.Page, { children: /* @__PURE__ */ jsxs(ui.Stack, { children: [
-      tabs.length > 0 && /* @__PURE__ */ jsx(ui.Tabs, { variant: "lift", tabs: tabs.map((t) => ({ id: t.type, label: t.label })), active: tab || "", onChange: selectTab }),
-      tab && typeDef && /* @__PURE__ */ jsx(
+      allTabs.length > 0 && /* @__PURE__ */ jsx(ui.Tabs, { variant: "lift", tabs: allTabs, active: tab || "", onChange: (t) => t === "_options" ? useData.setState({ activeTab: "_options", selectedId: null, mode: "list" }) : selectTab(t) }),
+      tab === "_options" && /* @__PURE__ */ jsx(OptionsPanel, {}),
+      tab && tab !== "_options" && typeDef && /* @__PURE__ */ jsx(
         CrudList,
         {
           type: tab,
@@ -140,7 +142,7 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
           onAdd: () => useData.setState({ mode: "add", selectedId: null })
         }
       ),
-      tab && typeDef && mode === "add" && /* @__PURE__ */ jsx(
+      tab && tab !== "_options" && typeDef && mode === "add" && /* @__PURE__ */ jsx(
         RecordForm,
         {
           schema: typeDef.schema,
@@ -279,9 +281,32 @@ const plugin = ({ React, ui, store, sdk, icons }) => {
       }
     }
   }
+  function OptionsPanel() {
+    const metas = store.usePosts("meta");
+    const optKeys = metas.filter((m) => m.data.opt).map((m) => String(m.data.opt));
+    const values = {};
+    for (const k of optKeys) values[k] = store.useOption(k) ?? "";
+    const isSecret = (k) => /key|secret|token|password/i.test(k);
+    return /* @__PURE__ */ jsxs(ui.Stack, { children: [
+      /* @__PURE__ */ jsxs(ui.Text, { muted: true, size: "xs", children: [
+        "Opcje (",
+        optKeys.length,
+        ")"
+      ] }),
+      optKeys.map((k) => /* @__PURE__ */ jsx(ui.Field, { label: k, children: /* @__PURE__ */ jsx(
+        ui.Input,
+        {
+          type: isSecret(k) ? "password" : "text",
+          value: values[k],
+          onChange: (e) => store.setOption(k, e.target.value)
+        }
+      ) }, k)),
+      optKeys.length === 0 && /* @__PURE__ */ jsx(ui.Text, { muted: true, size: "xs", children: "Brak zarejestrowanych opcji. Opcje deklarują pluginy przez defaultOptions w config.json." })
+    ] });
+  }
   sdk.registerView("data.center", { slot: "center", component: CrudView });
   sdk.registerView("data.right", { slot: "right", component: DetailPanel });
-  return { id: "data", label: "Dane", icon: Database, version: "0.3.0" };
+  return { id: "plugin-data", label: "Dane", icon: Database, version: "0.3.0" };
 };
 export {
   plugin as default

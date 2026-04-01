@@ -1,5 +1,7 @@
 {
   "name": "@obieg-zero/plugin-data",
-  "version": "1.0.0",
+  "version": "1.0.2",
+  "description": "Uniwersalna przeglądarka i edytor danych (CRUD)",
+  "price": 1000,
   "private": true
 }
